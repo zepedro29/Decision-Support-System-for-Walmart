@@ -1,0 +1,81 @@
+setwd("C:/Users/jpska/OneDrive/Ambiente de Trabalho/TIAPOSE/OtimizacaoAtualizada")
+source("blind.R") # fsearch is defined here
+source("hill.R") # mcsearch is defined here
+source("calcUpper.R")
+source("funcao_eval.R")
+library(rminer)
+
+#Read data
+cat("read Walmart Sales\n")
+TS <- read.csv("walmart.csv")
+TS$Date = as.Date(TS$Date, format="%Y-%m-%d")
+d1 <- TS[, 4:7] #Conjunto de dados
+
+evaluate_with_weights <- function(s, W1, W2) {
+  resultado <- eval(s)
+  
+  lucro <- resultado["lucro"]
+  esforco <- resultado["esforco"]
+  
+  E1 <- -W1 * lucro
+  E2 <- W2 * esforco
+  
+  E <- E1 + E2
+  
+  return(list(E = E, E1 = E1, E2 = E2, lucro = lucro, esforco = esforco))
+}
+
+#Variaveis Growing Window
+L <- nrow(d1)
+K <- 4
+Test <- 4
+S <- 4
+Runs <- 10
+W <- L - (Runs - 1) * S #initial training window size for the ts space
+
+evaluations <- c()
+
+for (b in 1:Runs) { 
+  resultados <- matrix(NA, nrow = L, ncol = 4) # supondo que há 4 colunas em d1
+  for(i in 1:4){
+    H <- holdout(d1[, i], ratio = Test, mode = "incremental", iter = b, window = W, increment = S) 
+    resultados[H$tr, i] <- d1[H$tr, i]
+  }
+  #print(H$tr)
+  #print(resultados)
+  #print(" ")
+  
+  vendasPrevistas <- resultados[(length(H$tr)-3):length(H$tr), ]
+  print("Vendas Previstas:")
+  print(vendasPrevistas)
+  cat("iter:", b, "| Semana ", length(H$tr)-3, "ate:", length(H$tr), "\n")
+  
+  
+  lower=rep(0,28) # lower bounds
+  upper <- calcUpper(vendasPrevistas)
+  
+  # slight change of a real par under a normal u(0,0.5) function:
+  rchange1=function(par,lower,upper) # change for hclimbing
+  { hchange(par,lower=lower,upper=upper,rnorm,mean=0,sd=0.25,round=TRUE) }
+  
+  # Controle para Hill Climbing
+  control <- list(maxit = 1000, REPORT = 100)
+  
+  W1=0.5
+  W2=0.5
+  Z=500.000
+  
+  # Função de avaliação para Hill Climbing
+  hc_eval <- function(s) {
+    result <- evaluate_with_weights(s, W1, W2)
+    return(result$E)  # Retorna apenas E para o otimizador
+  }
+  
+  HC=hclimbing(par = runif(28, lower, upper),fn=hc_eval,change=rchange1,lower=lower,upper=upper,control=control,type="min")
+  
+  # Captura os valores da melhor solução
+  best_result <- evaluate_with_weights(HC$sol, W1, W2)
+  
+  cat("best solution:",HC$sol,"evaluation function",HC$eval,"\n")
+  cat("Lucro:", -best_result$lucro, "\nEsforço:", best_result$esforco, "\n")
+}
